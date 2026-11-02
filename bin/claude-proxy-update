@@ -1,0 +1,120 @@
+#!/bin/sh
+# claude-proxy-update — обновление Claude.app строго через прокси.
+#
+# Встроенный обновлятор (Squirrel) ходит в сеть нативно, мимо --proxy-server,
+# и его режет Little Snitch. Этот скрипт делает то же самое через прокси:
+#   check   — проверить фид, скачать новую версию, сверить sha256 и подпись
+#             Anthropic, отложить готовую копию (запускается LaunchAgent'ом)
+#   install — поставить отложенную копию (вызывает лаунчер, когда Claude закрыт)
+#   status  — показать установленную, отложенную и актуальную версии
+
+set -eu
+
+PROXY="${CLAUDE_UPDATE_PROXY:-http://127.0.0.1:20809}"
+APP="/Applications/Claude.app"
+TEAM="Q6L2SF6YDW"
+BUNDLE_ID="com.anthropic.claudefordesktop"
+DIR="$HOME/Library/Caches/claude-proxy-update"
+STAGED="$DIR/staged/Claude.app"
+LOCK="$DIR/lock"
+
+mkdir -p "$DIR"
+log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
+die() { log "ОШИБКА: $*"; exit 1; }
+
+app_version() { defaults read "$1/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || echo 0; }
+
+# true, если $1 строго новее $2
+newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }
+
+# Подпись: валидна, команда Anthropic, нужный bundle id
+verify_app() {
+	codesign --verify --deep --strict "$1" 2>/dev/null || return 1
+	info=$(codesign -dv "$1" 2>&1)
+	echo "$info" | grep -qx "TeamIdentifier=$TEAM" || return 1
+	echo "$info" | grep -qx "Identifier=$BUNDLE_ID" || return 1
+}
+
+feed() {
+	did=$(base64 -D < "$HOME/Library/Application Support/Claude/ant-did" | tr -d '[:space:]')
+	arch=$(uname -m); [ "$arch" = "x86_64" ] && arch=x64
+	curl -fsS -x "$PROXY" -m 30 \
+		"https://api.anthropic.com/api/desktop/darwin/$arch/squirrel/update?device_id=$did&version=$(app_version "$APP")&os_version=$(sw_vers -productVersion)"
+}
+
+# Достаёт поле из ответа фида (последний релиз в списке)
+field() { /usr/bin/plutil -extract "releases.0.updateTo.$1" raw -o - - 2>/dev/null; }
+
+cmd_check() {
+	# Один экземпляр за раз
+	mkdir "$LOCK" 2>/dev/null || { log "уже выполняется"; exit 0; }
+	trap 'rm -rf "$LOCK" "$DIR/work"' EXIT
+
+	json=$(feed) || die "фид недоступен через $PROXY"
+	latest=$(printf '%s' "$json" | field version) || die "не разобрал фид: $json"
+	url=$(printf '%s' "$json" | field url)
+	sha=$(printf '%s' "$json" | field sha256)
+	installed=$(app_version "$APP")
+	staged=$( [ -d "$STAGED" ] && app_version "$STAGED" || echo 0)
+
+	if ! newer "$latest" "$installed" && [ "${FORCE:-0}" != 1 ]; then
+		log "актуально: $installed"; return
+	fi
+	if [ "$staged" = "$latest" ]; then
+		log "версия $latest уже скачана и ждёт установки"; return
+	fi
+	case "$url" in https://downloads.claude.ai/*) ;; *) die "неожиданный адрес загрузки: $url";; esac
+
+	log "скачиваю $latest через прокси: $url"
+	rm -rf "$DIR/work"; mkdir -p "$DIR/work"
+	# Прокси иногда рвёт длинные загрузки — докачиваем с места обрыва
+	ok=0
+	for try in 1 2 3 4 5 6 7 8; do
+		if curl -fsS -x "$PROXY" -m 1800 -C - -o "$DIR/work/claude.zip" "$url"; then ok=1; break; fi
+		log "обрыв загрузки (попытка $try), докачиваю"
+		sleep 3
+	done
+	[ "$ok" = 1 ] || die "загрузка не удалась"
+	got=$(shasum -a 256 "$DIR/work/claude.zip" | cut -d' ' -f1)
+	[ "$got" = "$sha" ] || die "sha256 не совпал: $got != $sha"
+	ditto -x -k "$DIR/work/claude.zip" "$DIR/work/x" || die "не распаковал архив"
+	[ -d "$DIR/work/x/Claude.app" ] || die "в архиве нет Claude.app"
+	verify_app "$DIR/work/x/Claude.app" || die "подпись не прошла проверку (ожидалась $TEAM/$BUNDLE_ID)"
+
+	rm -rf "$DIR/staged"; mkdir -p "$DIR/staged"
+	mv "$DIR/work/x/Claude.app" "$STAGED"
+	log "готово к установке: $latest (установлена $installed)"
+	osascript -e "display notification \"Версия $latest скачана через прокси. Установится при следующем запуске через Claude (proxied).\" with title \"Обновление Claude\"" >/dev/null 2>&1 || true
+}
+
+cmd_install() {
+	[ -d "$STAGED" ] || exit 0
+	installed=$(app_version "$APP"); staged=$(app_version "$STAGED")
+	if ! newer "$staged" "$installed"; then
+		rm -rf "$DIR/staged"; exit 0
+	fi
+	pgrep -f "$APP/" >/dev/null && die "Claude запущен — установка отложена"
+	verify_app "$STAGED" || { rm -rf "$DIR/staged"; die "отложенная копия не прошла проверку подписи, удалена"; }
+
+	rm -rf "$DIR/previous"; mkdir -p "$DIR/previous"
+	mv "$APP" "$DIR/previous/Claude.app"
+	if mv "$STAGED" "$APP"; then
+		log "установлено: $installed -> $staged (прошлая версия в $DIR/previous)"
+	else
+		mv "$DIR/previous/Claude.app" "$APP"
+		die "не удалось поставить $staged, вернул $installed"
+	fi
+}
+
+cmd_status() {
+	echo "установлена: $(app_version "$APP")"
+	echo "отложена:    $( [ -d "$STAGED" ] && app_version "$STAGED" || echo '-')"
+	echo "актуальная:  $(feed | field version || echo 'фид недоступен')"
+}
+
+case "${1:-}" in
+	check) cmd_check ;;
+	install) cmd_install ;;
+	status) cmd_status ;;
+	*) echo "usage: $(basename "$0") check|install|status" >&2; exit 2 ;;
+esac

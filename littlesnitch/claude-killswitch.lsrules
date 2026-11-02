@@ -1,0 +1,63 @@
+{
+  "name": "Claude kill-switch",
+  "description": "Приложению Claude (подпись Anthropic Q6L2SF6YDW) разрешён только loopback, где слушает прокси. Дочерние процессы CLI (команды Bash, MCP) правилами не затронуты.",
+  "rules": [
+    {
+      "process": "identifier.Q6L2SF6YDW/com.anthropic.claudefordesktop",
+      "action": "deny",
+      "direction": "outgoing",
+      "remote": "any",
+      "priority": "high",
+      "notes": "Claude kill-switch: главный процесс десктопа, всё мимо прокси запрещено."
+    },
+    {
+      "process": "identifier.Q6L2SF6YDW/com.anthropic.claudefordesktop",
+      "action": "allow",
+      "direction": "both",
+      "remote-addresses": "127.0.0.1, ::1",
+      "priority": "high",
+      "notes": "Claude kill-switch: главный процесс, разрешён только loopback (прокси)."
+    },
+    {
+      "process": "identifier.Q6L2SF6YDW/com.anthropic.claudefordesktop",
+      "via": "identifier.APPLE/com.apple.ssh",
+      "action": "allow",
+      "direction": "outgoing",
+      "remote": "any",
+      "priority": "high",
+      "notes": "Claude kill-switch: исключение — SSH-сессии десктопа (дочерний ssh) ходят куда угодно."
+    },
+    {
+      "process": "identifier.Q6L2SF6YDW/com.anthropic.claudefordesktop.helper",
+      "action": "deny",
+      "direction": "outgoing",
+      "remote": "any",
+      "priority": "high",
+      "notes": "Claude kill-switch: Claude Helper (сеть Chromium, Renderer, GPU, Plugin)."
+    },
+    {
+      "process": "identifier.Q6L2SF6YDW/com.anthropic.claudefordesktop.helper",
+      "action": "allow",
+      "direction": "both",
+      "remote-addresses": "127.0.0.1, ::1",
+      "priority": "high",
+      "notes": "Claude kill-switch: Claude Helper, разрешён только loopback (прокси)."
+    },
+    {
+      "process": "identifier.Q6L2SF6YDW/chrome_crashpad_handler",
+      "action": "deny",
+      "direction": "outgoing",
+      "remote": "any",
+      "priority": "high",
+      "notes": "Claude kill-switch: отправка крэш-репортов."
+    },
+    {
+      "process": "identifier.Q6L2SF6YDW/chrome_crashpad_handler",
+      "action": "allow",
+      "direction": "both",
+      "remote-addresses": "127.0.0.1, ::1",
+      "priority": "high",
+      "notes": "Claude kill-switch: crashpad, разрешён только loopback (прокси)."
+    }
+  ]
+}
