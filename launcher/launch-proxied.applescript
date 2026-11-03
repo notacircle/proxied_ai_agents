@@ -91,7 +91,8 @@ on applyOwnIcon()
 		set meBundle to mePath
 		if meBundle ends with "/" then set meBundle to text 1 thru -2 of meBundle
 
-		set sh to "src=$(ls -S /Applications/" & appName & ".app/Contents/Resources/*.icns 2>/dev/null | head -1); " & ¬
+		set appRes to "/Applications/" & appName & ".app/Contents"
+		set sh to "src=" & quoted form of appRes & "/Resources/$(defaults read " & quoted form of (appRes & "/Info") & " CFBundleIconFile | sed 's/[.]icns$//').icns; [ -f \"$src\" ] || src=; " & ¬
 			"dst=" & quoted form of meBundle & "/Contents/Resources/applet.icns; " & ¬
 			"if [ -n \"$src\" ] && [ -f \"$dst\" ] && ! cmp -s \"$src\" \"$dst\"; then " & ¬
 			"cp \"$src\" \"$dst\" && touch " & quoted form of meBundle & " && killall Finder; fi"

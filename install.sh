@@ -52,10 +52,14 @@ for a in $APPS; do
 		-e "s#^property updaterName : .*#property updaterName : \"$u\"#" \
 		"$REPO/launcher/launch-proxied.applescript" > "$TMP/$a.applescript"
 	osacompile -o "$TMP/$n (proxied).app" "$TMP/$a.applescript"
+	# иконка — та, на которую указывает CFBundleIconFile оригинала (у ChatGPT рядом лежит ещё иконка Codex)
+	icon=$(defaults read "/Applications/$n.app/Contents/Info" CFBundleIconFile 2>/dev/null || true)
+	[ -n "$icon" ] && cp "/Applications/$n.app/Contents/Resources/${icon%.icns}.icns" "$TMP/$n (proxied).app/Contents/Resources/applet.icns" \
+		|| echo "ВНИМАНИЕ: иконку $n не нашёл, останется стандартная"
 	codesign --force --sign - "$TMP/$n (proxied).app" 2>/dev/null
 	if [ -d "$LAUNCHER" ]; then mv "$LAUNCHER" "$TMP/old-$a.app"; fi
 	mv "$TMP/$n (proxied).app" "$LAUNCHER"
-	echo "собран; иконка $n подтянется при первом запуске"
+	echo "собран, иконка взята из $n.app"
 
 	step "$n: LaunchAgent обновлений через прокси"
 	sed -e "s#__HOME__#$HOME#g" -e "s#__UPDATER__#$u#g" "$REPO/launchd/proxy-update.plist.template" > "$AGENT"
