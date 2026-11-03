@@ -31,10 +31,10 @@ for a in $APPS; do
 		echo "$envs" | grep -q '^HTTPS_PROXY=' && ok "HTTPS_PROXY в окружении" || bad "нет HTTPS_PROXY в окружении"
 	fi
 
-	echo "Прямые соединения процессов из бандла (10 секунд)"
+	echo "Прямые соединения процессов из бандла (10 секунд; UDP без адреса назначения не видно — их ловит Little Snitch)"
 	direct=$(for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
 		for pid in $(pgrep -f "/Applications/$n.app/"); do
-			lsof -nP -a -p "$pid" -i 2>/dev/null | awk 'NR>1 && $9 !~ /^(127\.0\.0\.1|\[::1\]|\*)/ {print $1, $9}'
+			lsof -nP -a -p "$pid" -i 2>/dev/null | awk 'NR>1 && $9 ~ /->/ && $9 !~ /->(127\.0\.0\.1|\[::1\]):/ {print $1, $9}'
 		done; sleep 0.5; done | sort -u)
 	[ -z "$direct" ] && ok "ни одного соединения мимо loopback" || { bad "соединения мимо прокси:"; echo "$direct" | sed 's/^/        /'; }
 
