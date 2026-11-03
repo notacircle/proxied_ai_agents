@@ -1,40 +1,47 @@
 # claude-proxy-guard
 
-Claude Desktop и Claude Code на macOS работают **строго через прокси**, с kill-switch
-на уровне Little Snitch и обновлениями, которые тоже идут через прокси.
+Claude Desktop / Claude Code и ChatGPT (Codex) на macOS работают **строго через прокси**,
+с kill-switch на уровне Little Snitch и обновлениями, которые тоже идут через прокси.
 
 Требование:
-- всё, что делает **само приложение Claude** (чат, API, телеметрия, обновления), идёт только через прокси;
-- **дочерние процессы** (команды Bash, MCP, `ssh`) свободны и ходят куда хотят;
-- Claude может сознательно выйти без прокси командой `nopx <cmd>`.
+- всё, что делает **само приложение** (чат, API, телеметрия, обновления), идёт только через прокси;
+- **дочерние процессы агента** (команды Bash/shell, MCP, `ssh`) свободны и ходят куда хотят;
+- агент может сознательно выйти без прокси командой `nopx <cmd>`.
 
 Проверено на Claude 4.4212.0 (Electron 44, Node 24.22), Claude Code 2.1.309,
+ChatGPT 26.1027.61615 (`com.openai.codex`, Electron с Node 24.22),
 Little Snitch 6.3.3, macOS 15. Прокси — xray в Docker, HTTP на `127.0.0.1:20809`.
+
+Оба приложения — Electron, поэтому схема одна: лаунчер с `--proxy-server` и env,
+kill-switch по code ID, свой обновлятор через прокси вместо встроенного.
 
 ## Состав
 
 | Файл | Что делает |
 |---|---|
-| `launcher/launch-claude-proxy.applescript` | Лаунчер «Claude (proxied).app»: закрывает Claude, ставит отложенное обновление, запускает бинарник с `--proxy-server` и env |
-| `bin/claude-proxy-update` | Обновлятор через прокси: `check` / `install` / `status` |
+| `launcher/launch-proxied.applescript` | Лаунчер «Claude (proxied)» / «ChatGPT (proxied)» (install.sh подставляет `appName`, `updaterName`): закрывает приложение, ставит отложенное обновление, запускает бинарник с `--proxy-server` и env |
+| `bin/claude-proxy-update` | Обновлятор Claude через прокси (фид Squirrel): `check` / `install` / `status` |
+| `bin/chatgpt-proxy-update` | Обновлятор ChatGPT через прокси (appcast Sparkle): `check` / `install` / `status` |
 | `bin/nopx` | Запустить команду без proxy-переменных |
-| `launchd/local.claude-proxy-update.plist.template` | LaunchAgent: `check` при входе и раз в 4 часа |
+| `launchd/proxy-update.plist.template` | LaunchAgent `local.<app>-proxy-update`: `check` при входе и раз в 4 часа |
 | `claude/settings.env.json` | Блок `env` для `~/.claude/settings.json` (прокси для CLI) |
-| `littlesnitch/claude-killswitch.lsrules` | Правила kill-switch, единственный источник истины |
-| `littlesnitch/merge-rules.py` | Вливает `.lsrules` в выгрузку `export-model` |
-| `install.sh` | Ставит всё, кроме правил Little Snitch (без root) |
-| `verify.sh` | Проверяет, что всё работает; ничего не меняет |
+| `littlesnitch/claude-killswitch.lsrules`, `chatgpt-killswitch.lsrules` | Правила kill-switch, единственный источник истины |
+| `littlesnitch/merge-rules.py` | Вливает наборы `.lsrules` в выгрузку `export-model` |
+| `install.sh [claude] [chatgpt]` | Ставит всё, кроме правил Little Snitch (без root); без аргументов — все найденные приложения |
+| `verify.sh [claude] [chatgpt]` | Проверяет, что всё работает; ничего не меняет |
 
 ## Установка на новом Mac
 
-1. Поставить Claude Desktop в `/Applications/Claude.app` и поднять прокси.
+1. Поставить `/Applications/Claude.app` и/или `/Applications/ChatGPT.app`, поднять прокси.
 2. Установить:
    ```bash
    PROXY=http://127.0.0.1:20809 ./install.sh
    ```
-3. Little Snitch — см. раздел ниже (нужен root, делает человек).
-4. Закрыть Claude и запускать **только** через «Claude (proxied)». Иконку из Dock от обычного Claude убрать.
-5. Проверить: `./verify.sh` и Network Monitor в Little Snitch.
+3. Закрыть приложения и запустить **только** через «… (proxied)». Иконки обычных приложений из Dock убрать.
+4. `./verify.sh` — флаг, env и обновлятор на месте, приложение работает через прокси.
+5. Little Snitch — см. раздел ниже (нужен root, делает человек). Ставить после шага 4:
+   если приложение уже работает через прокси, kill-switch ничего не сломает.
+6. Ещё раз `./verify.sh` и Network Monitor в Little Snitch.
 
 ## Little Snitch
 
@@ -46,7 +53,7 @@ Little Snitch 6 не импортирует локальный `.lsrules` (то�
 sudo "/Applications/Little Snitch.app/Contents/Components/littlesnitch" export-model > ~/Desktop/ls-backup.json
 ```
 ```bash
-./littlesnitch/merge-rules.py ~/Desktop/ls-backup.json littlesnitch/claude-killswitch.lsrules ~/Desktop/ls-merged.json
+./littlesnitch/merge-rules.py ~/Desktop/ls-backup.json littlesnitch/claude-killswitch.lsrules littlesnitch/chatgpt-killswitch.lsrules ~/Desktop/ls-merged.json
 ```
 ```bash
 sudo "/Applications/Little Snitch.app/Contents/Components/littlesnitch" restore-model ~/Desktop/ls-merged.json
@@ -56,9 +63,10 @@ sudo "/Applications/Little Snitch.app/Contents/Components/littlesnitch" restore-
 sudo "/Applications/Little Snitch.app/Contents/Components/littlesnitch" restore-model ~/Desktop/ls-backup.json
 ```
 После этого выключить доступ из командной строки в настройках Little Snitch.
-`merge-rules.py` удаляет прежние правила kill-switch по метке в `notes`, так что его можно гонять повторно.
+`merge-rules.py` удаляет прежние правила каждого набора по метке в `notes` (метка — поле `name`
+набора), так что его можно гонять повторно и передавать только нужные наборы.
 
-### Правила
+### Правила Claude
 
 | Процесс (code ID, команда Anthropic `Q6L2SF6YDW`) | Правило |
 |---|---|
@@ -67,6 +75,22 @@ sudo "/Applications/Little Snitch.app/Contents/Components/littlesnitch" restore-
 | `chrome_crashpad_handler` | то же |
 | главный **via** `com.apple.ssh` | Allow any, Priority — SSH-сессии десктопа свободны |
 | `com.anthropic.claude-code` (CLI) | **правила нет** — см. ниже |
+
+### Правила ChatGPT
+
+| Процесс (code ID, команда OpenAI `2DC432GLL2`) | Правило |
+|---|---|
+| `com.openai.codex` (главный: Electron, Node, встроенный Sparkle) | Deny any + Allow `127.0.0.1, ::1`, оба Priority |
+| `com.openai.codex.helper` (Codex (Service): сеть Chromium, Node-сервис) | то же |
+| `com.openai.codex.helper.renderer` | то же |
+| `com.openai.codex.voice-host` | то же |
+| `browser_crashpad_handler` | то же |
+| главный **via** `com.apple.ssh` | Allow any, Priority |
+| Sparkle: `org.sparkle-project.DownloaderService`, `org.sparkle-project.Sparkle.Updater`, `Autoupdate` | Deny any, Priority |
+| `codex` (агент), `node` / `node_repl` (computer use), `com.openai.sky.CUAService` | **правил нет** — это агент и его инструменты, как Claude Code CLI |
+
+Голосовой режим: `voice-host` и WebRTC в хелпере под kill-switch могут ходить только через
+прокси. Если голос перестанет работать — смотреть Network Monitor, а не ослаблять правила.
 
 Правила привязаны к code ID, а не к пути, поэтому переживают обновления (путь CLI
 меняется с каждой версией: `~/Library/Application Support/Claude/claude-code/<ver>/<hash>/…`).
@@ -105,6 +129,8 @@ sudo "/Applications/Little Snitch.app/Contents/Components/littlesnitch" restore-
 
 ## Обновления через прокси
 
+### Claude
+
 Фид (тот же, что у встроенного обновлятора):
 ```
 https://api.anthropic.com/api/desktop/darwin/<arm64|x64>/squirrel/update?device_id=<id>&version=<v>&os_version=<macOS>
@@ -118,6 +144,25 @@ sha256 и подпись (`Q6L2SF6YDW` / `com.anthropic.claudefordesktop`), кл
 `~/Library/Caches/claude-proxy-update/staged`. Лаунчер вызывает `install`, когда Claude
 закрыт; прошлая версия остаётся в `…/previous`.
 
+### ChatGPT
+
+Встроенный обновлятор — Sparkle через нативный аддон `sparkle.node`, мимо `--proxy-server`.
+Фиды (из `app.asar`, `package.json` → `codexSparkleFeedUrl` и код `production-appcast`):
+```
+https://updates.oaistatic.com/codex/app/appcast?installation_id=<uuid>&arch=<arm64|x64>&app_version=<v>&beta=false&os-version=<macOS>&plan_type=<plan>
+https://persistent.oaistatic.com/codex-app-prod/appcast.xml
+```
+- Первый — production, отвечает 307 на `appcast-<версия>.xml` нужного этапа раскатки.
+  `installation_id` берётся из `~/Library/Application Support/com.openai.codex/production-appcast-bootstrap.json`,
+  если приложение его сохранило, иначе свой постоянный в кэше обновлятора. Второй — запасной.
+- Элемент Sparkle: `sparkle:version` (= `CFBundleVersion`), `enclosure url/length/sparkle:edSignature`;
+  сравнение идёт по номеру сборки.
+- Проверки: адрес на `persistent.oaistatic.com/codex-app-prod/`, длина, **EdDSA** по ключу
+  `SUPublicEDKey` из установленного приложения (нужен OpenSSL 3 — `brew install openssl`;
+  LibreSSL из macOS Ed25519 не умеет, без него проверка пропускается с предупреждением),
+  подпись кода `2DC432GLL2` / `com.openai.codex`.
+- Кэш: `~/Library/Caches/chatgpt-proxy-update`, лог: `~/Library/Logs/chatgpt-proxy-update.log`.
+
 ## Выход без прокси
 
 ```bash
@@ -129,5 +174,6 @@ nopx ssh user@host
 
 - `./verify.sh` — флаги и env главного процесса, прямые сокеты, LaunchAgent, версии.
 - `~/Library/Logs/Claude/main.log` — `[updater]`, `stealth-relaunch`, `Resolved system proxy`.
-- `~/Library/Logs/claude-proxy-update.log` — обновлятор.
-- `claude-proxy-update status` — установлена / отложена / актуальная.
+- `~/Library/Logs/com.openai.codex/<дата>/` — логи ChatGPT, `[sparkle]`.
+- `~/Library/Logs/<app>-proxy-update.log` — обновлятор.
+- `claude-proxy-update status`, `chatgpt-proxy-update status` — установлена / отложена / актуальная.

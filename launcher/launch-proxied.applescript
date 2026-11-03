@@ -1,13 +1,15 @@
--- launch-claude-proxy.applescript
--- Запуск нативного приложения Claude на macOS через прокси.
+-- launch-proxied.applescript
+-- Запуск Electron-приложения (Claude, ChatGPT) на macOS через прокси.
 --
--- Нативное приложение не наследует системный прокси, поэтому
--- бинарник запускается напрямую с флагом --proxy-server и env-переменными.
+-- Приложение не наследует системный прокси, поэтому бинарник
+-- запускается напрямую с флагом --proxy-server и env-переменными.
+-- install.sh собирает из этого файла «Claude (proxied)» и «ChatGPT (proxied)»,
+-- подставляя appName и updaterName.
 --
 -- Как пользоваться:
 --   1. Откройте файл в Script Editor (Скрипт-редактор).
 --   2. Отредактируйте свойства ниже (хост, порт, тип прокси).
---   3. Нажмите Run. Либо из терминала: osascript launch-claude-proxy.applescript
+--   3. Нажмите Run. Либо из терминала: osascript launch-proxied.applescript
 --
 -- Можно сохранить как Программу (File -> Export -> File Format: Application),
 -- тогда получится кликабельный лаунчер в Dock.
@@ -16,7 +18,7 @@
 -- НАСТРОЙКИ
 -- ============================================================
 
--- HTTP/HTTPS прокси — его использует САМ Claude Code для API.
+-- HTTP/HTTPS прокси для самого приложения и его встроенного CLI.
 -- Схема всегда http:// или https://.
 property httpProxyURL : "http://127.0.0.1:20809"
 
@@ -26,7 +28,10 @@ property noProxyList : "localhost,127.0.0.1,::1"
 -- Имя приложения как в /Applications
 property appName : "Claude"
 
--- Один раз подтянуть иконку Claude на этот скрипт-лаунчер.
+-- Обновлятор через прокси в ~/.local/bin (claude-proxy-update, chatgpt-proxy-update)
+property updaterName : "claude-proxy-update"
+
+-- Один раз подтянуть иконку приложения на этот скрипт-лаунчер.
 -- Работает только если скрипт сохранён как Программа (.app).
 property setOwnIcon : true
 
@@ -62,7 +67,7 @@ on quitAppIfRunning(theApp)
 	end try
 
 	-- 2. Принудительно добиваем все процессы из бандла приложения
-	--    (главный процесс + Electron-хелперы + VM Cowork).
+	--    (главный процесс, Electron-хелперы, встроенный CLI).
 	set bundlePath to "/Applications/" & theApp & ".app/"
 	try
 		do shell script "pkill -f " & quoted form of bundlePath
@@ -76,7 +81,7 @@ on quitAppIfRunning(theApp)
 	return my waitGone(bundlePath, 10)
 end quitAppIfRunning
 
--- Копирует .icns из приложения Claude на бандл этого лаунчера.
+-- Копирует .icns из приложения на бандл этого лаунчера.
 -- Тихо выходит, если скрипт запущен не как .app или иконка уже совпадает.
 on applyOwnIcon()
 	try
@@ -101,19 +106,19 @@ on run
 
 	-- Полностью закрываем старый экземпляр: при работающем процессе
 	-- single-instance lock отдаёт запуск ему, и новый флаг теряется.
-	-- Если старый не умер — не запускаем, иначе Claude останется без прокси.
+	-- Если старый не умер — не запускаем, иначе приложение останется без прокси.
 	if not my quitAppIfRunning(appName) then
-		display dialog "Старый процесс Claude не завершился — запуск отменён, чтобы не остаться без прокси." & return & return & ¬
-			"Закройте Claude вручную и запустите лаунчер снова." buttons {"OK"} default button "OK" with icon stop
+		display dialog "Старый процесс " & appName & " не завершился — запуск отменён, чтобы не остаться без прокси." & return & return & ¬
+			"Закройте " & appName & " вручную и запустите лаунчер снова." buttons {"OK"} default button "OK" with icon stop
 		return
 	end if
 
-	-- Ставим обновление, скачанное через прокси (claude-proxy-update check).
-	-- Встроенный обновлятор Claude ходит мимо прокси и заблокирован.
+	-- Ставим обновление, скачанное через прокси (<updaterName> check).
+	-- Встроенный обновлятор (Squirrel, Sparkle) ходит мимо прокси и заблокирован.
 	try
-		do shell script "\"$HOME/.local/bin/claude-proxy-update\" install >> \"$HOME/Library/Logs/claude-proxy-update.log\" 2>&1"
+		do shell script "\"$HOME/.local/bin/" & updaterName & "\" install >> \"$HOME/Library/Logs/" & updaterName & ".log\" 2>&1"
 	on error
-		display notification "Обновление не установлено, запускаю текущую версию" with title "Claude proxy launcher"
+		display notification "Обновление не установлено, запускаю текущую версию" with title appName & " proxy launcher"
 	end try
 
 	-- КЛЮЧЕВОЕ: сетевой стек Electron/Chromium НЕ читает HTTPS_PROXY,
@@ -131,7 +136,7 @@ on run
 
 	try
 		do shell script sh
-		display notification "--proxy-server=" & httpProxyURL with title "Claude proxy launcher"
+		display notification "--proxy-server=" & httpProxyURL with title appName & " proxy launcher"
 	on error errMsg number errNum
 		display dialog "Запуск не удался:" & return & return & errMsg & ¬
 			" (" & errNum & ")" & return & return & "Команда:" & return & sh ¬

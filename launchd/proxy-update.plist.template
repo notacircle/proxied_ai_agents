@@ -3,10 +3,10 @@
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>local.claude-proxy-update</string>
+	<string>local.__UPDATER__</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>__HOME__/.local/bin/claude-proxy-update</string>
+		<string>__HOME__/.local/bin/__UPDATER__</string>
 		<string>check</string>
 	</array>
 	<key>EnvironmentVariables</key>
@@ -19,8 +19,8 @@
 	<key>StartInterval</key>
 	<integer>14400</integer>
 	<key>StandardOutPath</key>
-	<string>__HOME__/Library/Logs/claude-proxy-update.log</string>
+	<string>__HOME__/Library/Logs/__UPDATER__.log</string>
 	<key>StandardErrorPath</key>
-	<string>__HOME__/Library/Logs/claude-proxy-update.log</string>
+	<string>__HOME__/Library/Logs/__UPDATER__.log</string>
 </dict>
 </plist>

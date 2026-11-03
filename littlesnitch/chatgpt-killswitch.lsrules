@@ -1,0 +1,119 @@
+{
+  "name": "ChatGPT kill-switch",
+  "description": "Приложению ChatGPT (Codex, подпись OpenAI 2DC432GLL2) разрешён только loopback, где слушает прокси. Агент codex, его команды и node для computer use правилами не затронуты.",
+  "rules": [
+    {
+      "process": "identifier.2DC432GLL2/com.openai.codex",
+      "action": "deny",
+      "direction": "outgoing",
+      "remote": "any",
+      "priority": "high",
+      "notes": "ChatGPT kill-switch: главный процесс (Electron/Node и встроенный Sparkle), всё мимо прокси запрещено."
+    },
+    {
+      "process": "identifier.2DC432GLL2/com.openai.codex",
+      "action": "allow",
+      "direction": "both",
+      "remote-addresses": "127.0.0.1, ::1",
+      "priority": "high",
+      "notes": "ChatGPT kill-switch: главный процесс, разрешён только loopback (прокси)."
+    },
+    {
+      "process": "identifier.2DC432GLL2/com.openai.codex",
+      "via": "identifier.APPLE/com.apple.ssh",
+      "action": "allow",
+      "direction": "outgoing",
+      "remote": "any",
+      "priority": "high",
+      "notes": "ChatGPT kill-switch: исключение — SSH-сессии приложения (дочерний ssh) ходят куда угодно."
+    },
+    {
+      "process": "identifier.2DC432GLL2/com.openai.codex.helper",
+      "action": "deny",
+      "direction": "outgoing",
+      "remote": "any",
+      "priority": "high",
+      "notes": "ChatGPT kill-switch: Codex (Service) — сеть Chromium, Node-сервис, GPU."
+    },
+    {
+      "process": "identifier.2DC432GLL2/com.openai.codex.helper",
+      "action": "allow",
+      "direction": "both",
+      "remote-addresses": "127.0.0.1, ::1",
+      "priority": "high",
+      "notes": "ChatGPT kill-switch: Codex (Service), разрешён только loopback (прокси)."
+    },
+    {
+      "process": "identifier.2DC432GLL2/com.openai.codex.helper.renderer",
+      "action": "deny",
+      "direction": "outgoing",
+      "remote": "any",
+      "priority": "high",
+      "notes": "ChatGPT kill-switch: Codex (Renderer)."
+    },
+    {
+      "process": "identifier.2DC432GLL2/com.openai.codex.helper.renderer",
+      "action": "allow",
+      "direction": "both",
+      "remote-addresses": "127.0.0.1, ::1",
+      "priority": "high",
+      "notes": "ChatGPT kill-switch: Codex (Renderer), разрешён только loopback (прокси)."
+    },
+    {
+      "process": "identifier.2DC432GLL2/com.openai.codex.voice-host",
+      "action": "deny",
+      "direction": "outgoing",
+      "remote": "any",
+      "priority": "high",
+      "notes": "ChatGPT kill-switch: голосовой хост."
+    },
+    {
+      "process": "identifier.2DC432GLL2/com.openai.codex.voice-host",
+      "action": "allow",
+      "direction": "both",
+      "remote-addresses": "127.0.0.1, ::1",
+      "priority": "high",
+      "notes": "ChatGPT kill-switch: голосовой хост, разрешён только loopback (прокси)."
+    },
+    {
+      "process": "identifier.2DC432GLL2/browser_crashpad_handler",
+      "action": "deny",
+      "direction": "outgoing",
+      "remote": "any",
+      "priority": "high",
+      "notes": "ChatGPT kill-switch: отправка крэш-репортов."
+    },
+    {
+      "process": "identifier.2DC432GLL2/browser_crashpad_handler",
+      "action": "allow",
+      "direction": "both",
+      "remote-addresses": "127.0.0.1, ::1",
+      "priority": "high",
+      "notes": "ChatGPT kill-switch: crashpad, разрешён только loopback (прокси)."
+    },
+    {
+      "process": "identifier.2DC432GLL2/org.sparkle-project.DownloaderService",
+      "action": "deny",
+      "direction": "outgoing",
+      "remote": "any",
+      "priority": "high",
+      "notes": "ChatGPT kill-switch: загрузчик Sparkle (нативная сеть, мимо прокси). Обновления — через chatgpt-proxy-update."
+    },
+    {
+      "process": "identifier.2DC432GLL2/org.sparkle-project.Sparkle.Updater",
+      "action": "deny",
+      "direction": "outgoing",
+      "remote": "any",
+      "priority": "high",
+      "notes": "ChatGPT kill-switch: Sparkle Updater.app (нативная сеть, мимо прокси)."
+    },
+    {
+      "process": "identifier.2DC432GLL2/Autoupdate",
+      "action": "deny",
+      "direction": "outgoing",
+      "remote": "any",
+      "priority": "high",
+      "notes": "ChatGPT kill-switch: Sparkle Autoupdate (нативная сеть, мимо прокси)."
+    }
+  ]
+}

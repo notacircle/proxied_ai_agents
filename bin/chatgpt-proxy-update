@@ -1,0 +1,172 @@
+#!/bin/sh
+# chatgpt-proxy-update — обновление ChatGPT.app (Codex, com.openai.codex) строго через прокси.
+#
+# Встроенный обновлятор (Sparkle) ходит в сеть нативно, мимо --proxy-server,
+# и его режет Little Snitch. Этот скрипт делает то же самое через прокси:
+#   check   — прочитать appcast, скачать новую версию, сверить длину, подпись
+#             EdDSA из appcast и подпись OpenAI, отложить готовую копию
+#   install — поставить отложенную копию (вызывает лаунчер, когда ChatGPT закрыт)
+#   status  — показать установленную, отложенную и актуальную версии
+
+set -eu
+
+PROXY="${CHATGPT_UPDATE_PROXY:-http://127.0.0.1:20809}"
+APP="/Applications/ChatGPT.app"
+TEAM="2DC432GLL2"
+BUNDLE_ID="com.openai.codex"
+FEED_LEGACY="https://persistent.oaistatic.com/codex-app-prod/appcast.xml"
+FEED_PROD="https://updates.oaistatic.com/codex/app/appcast"
+DOWNLOAD_PREFIX="https://persistent.oaistatic.com/codex-app-prod/"
+DIR="$HOME/Library/Caches/chatgpt-proxy-update"
+STAGED="$DIR/staged/ChatGPT.app"
+LOCK="$DIR/lock"
+
+mkdir -p "$DIR"
+log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
+die() { log "ОШИБКА: $*"; exit 1; }
+
+plist() { defaults read "$1/Contents/Info.plist" "$2" 2>/dev/null || echo 0; }
+app_version() { plist "$1" CFBundleShortVersionString; }
+app_build() { plist "$1" CFBundleVersion; }
+
+# Подпись: валидна, команда OpenAI, нужный bundle id
+verify_app() {
+	codesign --verify --deep --strict "$1" 2>/dev/null || return 1
+	info=$(codesign -dv "$1" 2>&1)
+	echo "$info" | grep -qx "TeamIdentifier=$TEAM" || return 1
+	echo "$info" | grep -qx "Identifier=$BUNDLE_ID" || return 1
+}
+
+# OpenSSL 3 (LibreSSL из macOS не умеет Ed25519)
+find_openssl() {
+	for o in /opt/homebrew/bin/openssl /usr/local/bin/openssl "$(command -v openssl || true)"; do
+		[ -x "$o" ] && "$o" version 2>/dev/null | grep -q '^OpenSSL [3-9]' && { echo "$o"; return; }
+	done
+	return 1
+}
+
+# Подпись EdDSA из appcast, ключ — SUPublicEDKey установленного (подписанного OpenAI) приложения
+verify_ed() {
+	file=$1 sig=$2
+	ossl=$(find_openssl) || { log "ВНИМАНИЕ: нет OpenSSL 3 (brew install openssl) — EdDSA не проверена, полагаюсь на подпись кода"; return 0; }
+	key=$(plist "$APP" SUPublicEDKey)
+	[ "$key" != 0 ] || die "нет SUPublicEDKey в $APP"
+	{ printf '\060\052\060\005\006\003\053\145\160\003\041\000'; printf '%s' "$key" | base64 -D; } > "$DIR/work/pub.der"
+	printf '%s' "$sig" | base64 -D > "$DIR/work/sig"
+	"$ossl" pkeyutl -verify -pubin -keyform DER -inkey "$DIR/work/pub.der" -rawin \
+		-in "$file" -sigfile "$DIR/work/sig" >/dev/null 2>&1
+}
+
+# id для поэтапной раскатки: как у самого приложения, иначе свой постоянный
+installation_id() {
+	f="$HOME/Library/Application Support/com.openai.codex/production-appcast-bootstrap.json"
+	id=$(plutil -extract installationId raw -o - "$f" 2>/dev/null || true)
+	[ -n "$id" ] || { [ -s "$DIR/installation-id" ] || uuidgen | tr A-Z a-z > "$DIR/installation-id"; id=$(cat "$DIR/installation-id"); }
+	echo "$id"
+}
+
+# Appcast: сначала production-фид (редиректит на нужный этап раскатки), потом общий
+appcast() {
+	arch=$(uname -m); [ "$arch" = "x86_64" ] && arch=x64
+	q="installation_id=$(installation_id)&arch=$arch&app_version=$(app_version "$APP")&beta=false&os-version=$(sw_vers -productVersion)&plan_type=${CHATGPT_PLAN_TYPE:-plus}"
+	curl -fsSL -x "$PROXY" -m 60 "$FEED_PROD?$q" 2>/dev/null || curl -fsSL -x "$PROXY" -m 60 "$FEED_LEGACY"
+}
+
+# Самая свежая подходящая сборка: "build version url length edSignature"
+latest() {
+	/usr/bin/python3 -I -c '
+import sys, platform, xml.etree.ElementTree as ET
+S = "{http://www.andymatuschak.org/xml-namespaces/sparkle}"
+arch = {"x86_64": "x86_64", "arm64": "arm64"}[platform.machine()]
+osv = tuple(int(x) for x in platform.mac_ver()[0].split("."))
+best = None
+for it in ET.parse(sys.stdin).getroot().iter("item"):
+    enc = it.find("enclosure")
+    hw = (it.findtext(S + "hardwareRequirements") or arch).split(",")
+    mn = tuple(int(x) for x in (it.findtext(S + "minimumSystemVersion") or "0").split("."))
+    if enc is None or arch not in hw or mn > osv:
+        continue
+    build = int(it.findtext(S + "version") or enc.get(S + "version"))
+    if best is None or build > best[0]:
+        best = (build, it.findtext(S + "shortVersionString") or enc.get(S + "shortVersionString"),
+                enc.get("url"), enc.get("length"), enc.get(S + "edSignature"))
+if best is None:
+    sys.exit("в appcast нет подходящих сборок")
+print(*best)
+'
+}
+
+cmd_check() {
+	# Один экземпляр за раз
+	mkdir "$LOCK" 2>/dev/null || { log "уже выполняется"; exit 0; }
+	trap 'rm -rf "$LOCK" "$DIR/work"' EXIT
+
+	xml=$(appcast) || die "appcast недоступен через $PROXY"
+	best=$(printf '%s' "$xml" | latest) || die "не разобрал appcast"
+	set -- $best
+	build=$1 latest=$2 url=$3 len=$4 sig=$5
+	installed=$(app_build "$APP")
+	staged=$( [ -d "$STAGED" ] && app_build "$STAGED" || echo 0)
+
+	if [ "$build" -le "$installed" ] && [ "${FORCE:-0}" != 1 ]; then
+		log "актуально: $(app_version "$APP") ($installed)"; return
+	fi
+	if [ "$staged" = "$build" ]; then
+		log "версия $latest уже скачана и ждёт установки"; return
+	fi
+	case "$url" in "$DOWNLOAD_PREFIX"*) ;; *) die "неожиданный адрес загрузки: $url";; esac
+
+	log "скачиваю $latest ($build) через прокси: $url"
+	rm -rf "$DIR/work"; mkdir -p "$DIR/work"
+	# Прокси иногда рвёт длинные загрузки — докачиваем с места обрыва
+	ok=0
+	for try in 1 2 3 4 5 6 7 8; do
+		if curl -fsS -x "$PROXY" -m 1800 -C - -o "$DIR/work/chatgpt.zip" "$url"; then ok=1; break; fi
+		log "обрыв загрузки (попытка $try), докачиваю"
+		sleep 3
+	done
+	[ "$ok" = 1 ] || die "загрузка не удалась"
+	got=$(stat -f %z "$DIR/work/chatgpt.zip")
+	[ "$got" = "$len" ] || die "размер не совпал: $got != $len"
+	verify_ed "$DIR/work/chatgpt.zip" "$sig" || die "подпись EdDSA из appcast не совпала"
+	ditto -x -k "$DIR/work/chatgpt.zip" "$DIR/work/x" || die "не распаковал архив"
+	[ -d "$DIR/work/x/ChatGPT.app" ] || die "в архиве нет ChatGPT.app"
+	verify_app "$DIR/work/x/ChatGPT.app" || die "подпись не прошла проверку (ожидалась $TEAM/$BUNDLE_ID)"
+
+	rm -rf "$DIR/staged"; mkdir -p "$DIR/staged"
+	mv "$DIR/work/x/ChatGPT.app" "$STAGED"
+	log "готово к установке: $latest (установлена $(app_version "$APP"))"
+	osascript -e "display notification \"Версия $latest скачана через прокси. Установится при следующем запуске через ChatGPT (proxied).\" with title \"Обновление ChatGPT\"" >/dev/null 2>&1 || true
+}
+
+cmd_install() {
+	[ -d "$STAGED" ] || exit 0
+	installed=$(app_build "$APP"); staged=$(app_build "$STAGED")
+	if [ "$staged" -le "$installed" ]; then
+		rm -rf "$DIR/staged"; exit 0
+	fi
+	pgrep -f "$APP/" >/dev/null && die "ChatGPT запущен — установка отложена"
+	verify_app "$STAGED" || { rm -rf "$DIR/staged"; die "отложенная копия не прошла проверку подписи, удалена"; }
+
+	rm -rf "$DIR/previous"; mkdir -p "$DIR/previous"
+	mv "$APP" "$DIR/previous/ChatGPT.app"
+	if mv "$STAGED" "$APP"; then
+		log "установлено: $installed -> $staged (прошлая версия в $DIR/previous)"
+	else
+		mv "$DIR/previous/ChatGPT.app" "$APP"
+		die "не удалось поставить $staged, вернул $installed"
+	fi
+}
+
+cmd_status() {
+	echo "установлена: $(app_version "$APP") ($(app_build "$APP"))"
+	echo "отложена:    $( [ -d "$STAGED" ] && echo "$(app_version "$STAGED") ($(app_build "$STAGED"))" || echo '-')"
+	echo "актуальная:  $(appcast 2>/dev/null | latest 2>/dev/null | awk '{print $2" ("$1")"}' || echo 'appcast недоступен')"
+}
+
+case "${1:-}" in
+	check) cmd_check ;;
+	install) cmd_install ;;
+	status) cmd_status ;;
+	*) echo "usage: $(basename "$0") check|install|status" >&2; exit 2 ;;
+esac
