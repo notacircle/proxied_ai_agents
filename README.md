@@ -5,8 +5,9 @@ Claude Desktop / Claude Code и ChatGPT (Codex) на macOS работают **с
 
 Требование:
 - всё, что делает **само приложение** (чат, API, телеметрия, обновления), идёт только через прокси;
-- **дочерние процессы агента** (команды Bash/shell, MCP, `ssh`) свободны и ходят куда хотят;
-- агент может сознательно выйти без прокси командой `nopx <cmd>`.
+- **дочерние процессы Claude Code** (команды Bash, MCP, `ssh`) свободны и ходят куда хотят;
+- Claude Code может сознательно выйти без прокси командой `nopx <cmd>`;
+- **команды агента Codex** выходят только через прокси, напрямую только `ssh` (см. «Little Snitch: грабли»).
 
 Проверено на Claude 4.4212.0 (Electron 44, Node 24.22), Claude Code 2.1.309,
 ChatGPT 26.1027.61615 (`com.openai.codex`, Electron с Node 24.22),
@@ -87,7 +88,7 @@ sudo "/Applications/Little Snitch.app/Contents/Components/littlesnitch" restore-
 | `browser_crashpad_handler` | то же |
 | главный **via** `com.apple.ssh` | Allow any, Priority |
 | Sparkle: `org.sparkle-project.DownloaderService`, `org.sparkle-project.Sparkle.Updater`, `Autoupdate` | Deny any, Priority |
-| `codex` (агент), `node` / `node_repl` (computer use), `com.openai.sky.CUAService` | **правил нет** — это агент и его инструменты, как Claude Code CLI |
+| `codex` (агент), `node` / `node_repl` (computer use), `com.openai.sky.CUAService` | Своих правил нет. `codex` и `node` лежат в бандле, поэтому на них действует правило главного процесса; `CUAService` лежит в `~/.codex/computer-use` и не ограничен |
 
 Голосовой режим: `voice-host` и WebRTC в хелпере под kill-switch могут ходить только через
 прокси. Если голос перестанет работать — смотреть Network Monitor, а не ослаблять правила.
@@ -114,6 +115,11 @@ sudo "/Applications/Little Snitch.app/Contents/Components/littlesnitch" restore-
 
 ## Little Snitch: грабли
 
+- **Команды агента Codex считаются трафиком самого ChatGPT.** Агент `codex` лежит внутри
+  `ChatGPT.app`, поэтому Little Snitch показывает его команды как «ChatGPT via gh», и правило на
+  главный процесс действует и на них. Выбран строгий режим: команды агента Codex выходят только
+  через прокси (наследуют `HTTPS_PROXY`), напрямую ходит только `ssh`, `nopx` в Codex не работает.
+  У Claude иначе: Claude Code лежит вне бандла, его команды видны как «claude via curl» и свободны.
 - **Правило без `via` действует и на все дочерние процессы** («claude via curl»). Поэтому на
   CLI правила нет: иначе режутся все команды Bash и `nopx` бесполезен. Задать «via любой» нельзя.
   CLI держится на `env` из `~/.claude/settings.json` (его читают все Code-сессии, включая VS Code).
