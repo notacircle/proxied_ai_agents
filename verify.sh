@@ -3,6 +3,11 @@
 #   ./verify.sh               # все установленные
 #   ./verify.sh chatgpt       # только выбранные: claude, chatgpt
 
+PATH="$HOME/.local/bin:$PATH"
+# Адрес прокси — тот, с которым поставлен обновлятор
+for u in claude-proxy-update chatgpt-proxy-update; do
+	[ -n "${PROXY:-}" ] || PROXY=$(sed -n 's/^PROXY="\${[A-Z_]*:-\(.*\)}"$/\1/p' "$HOME/.local/bin/$u" 2>/dev/null)
+done
 PROXY="${PROXY:-http://127.0.0.1:20809}"
 PORT="${PROXY##*:}"; PORT="${PORT%%/*}"
 ok() { printf '  OK    %s\n' "$*"; }

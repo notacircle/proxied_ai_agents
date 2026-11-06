@@ -1,4 +1,52 @@
-# claude-proxy-guard
+# proxied_ai_agents
+
+## Быстрый старт
+
+Нужны macOS, HTTP-прокси и установленные `/Applications/Claude.app` и/или `/Applications/ChatGPT.app`.
+Claude и ChatGPT лучше не открывать до конца установки, иначе первый запуск пойдёт мимо прокси.
+
+```bash
+git clone https://github.com/notacircle/proxied_ai_agents.git
+```
+```bash
+cd proxied_ai_agents && ./setup.sh
+```
+
+Скрипт спросит адрес прокси и, если найдёт Little Snitch, ставить ли kill-switch.
+После установки запускайте приложения только через «Claude (proxied)» и «ChatGPT (proxied)».
+
+Без вопросов:
+```bash
+./setup.sh install --proxy http://127.0.0.1:20809 --no-little-snitch
+```
+```bash
+./setup.sh install --proxy http://127.0.0.1:20809 --apps claude --little-snitch
+```
+
+| Команда | Что делает |
+|---|---|
+| `./setup.sh` | Пошаговая установка |
+| `./setup.sh install` | Установка по параметрам: `--proxy URL`, `--apps claude,chatgpt`, `--little-snitch` или `--no-little-snitch`, `--yes` |
+| `./setup.sh little-snitch` | Поставить или обновить kill-switch, можно позже и повторно |
+| `./setup.sh verify` | Проверить, что всё работает; ничего не меняет |
+| `./setup.sh uninstall` | Удалить лаунчеры, обновляторы, настройки прокси и правила; сами приложения остаются |
+
+### С Little Snitch и без него
+
+| | Без Little Snitch | С Little Snitch |
+|---|---|---|
+| Запуск через прокси | да | да |
+| Обновления через прокси | да | да |
+| Запрет выхода мимо прокси | **нет** | да |
+
+Без kill-switch встроенный обновлятор приложения по-прежнему может выйти напрямую и после
+обновления перезапустить приложение уже без прокси. Обычный значок приложения тоже запустит его
+мимо прокси. С kill-switch в этих случаях приложение просто останется без сети.
+
+Прокси с логином и паролем в адресе не поддерживается: флаг `--proxy-server` их не понимает.
+SOCKS тоже не поддерживается.
+
+## Как это устроено
 
 Claude Desktop / Claude Code и ChatGPT (Codex) на macOS работают **строго через прокси**,
 с kill-switch на уровне Little Snitch и обновлениями, которые тоже идут через прокси.
@@ -20,52 +68,31 @@ kill-switch по code ID, свой обновлятор через прокси 
 
 | Файл | Что делает |
 |---|---|
-| `launcher/launch-proxied.applescript` | Лаунчер «Claude (proxied)» / «ChatGPT (proxied)» (install.sh подставляет `appName`, `updaterName`): закрывает приложение, ставит отложенное обновление, запускает бинарник с `--proxy-server` и env |
+| `setup.sh` | Единая точка входа: установка, kill-switch, проверка, удаление |
+| `launcher/launch-proxied.applescript` | Лаунчер «Claude (proxied)» / «ChatGPT (proxied)» (setup.sh подставляет `appName`, `updaterName`): закрывает приложение, ставит отложенное обновление, запускает бинарник с `--proxy-server` и env |
 | `bin/claude-proxy-update` | Обновлятор Claude через прокси (фид Squirrel): `check` / `install` / `status` |
 | `bin/chatgpt-proxy-update` | Обновлятор ChatGPT через прокси (appcast Sparkle): `check` / `install` / `status` |
 | `bin/nopx` | Запустить команду без proxy-переменных |
 | `launchd/proxy-update.plist.template` | LaunchAgent `local.<app>-proxy-update`: `check` при входе и раз в 4 часа |
-| `claude/settings.env.json` | Блок `env` для `~/.claude/settings.json` (прокси для CLI) |
 | `littlesnitch/claude-killswitch.lsrules`, `chatgpt-killswitch.lsrules` | Правила kill-switch, единственный источник истины |
 | `littlesnitch/merge-rules.py` | Вливает наборы `.lsrules` в выгрузку `export-model` |
-| `install.sh [claude] [chatgpt]` | Ставит всё, кроме правил Little Snitch (без root); без аргументов — все найденные приложения |
-| `verify.sh [claude] [chatgpt]` | Проверяет, что всё работает; ничего не меняет |
-
-## Установка на новом Mac
-
-1. Поставить `/Applications/Claude.app` и/или `/Applications/ChatGPT.app`, поднять прокси.
-2. Установить:
-   ```bash
-   PROXY=http://127.0.0.1:20809 ./install.sh
-   ```
-3. Закрыть приложения и запустить **только** через «… (proxied)». Иконки обычных приложений из Dock убрать.
-4. `./verify.sh` — флаг, env и обновлятор на месте, приложение работает через прокси.
-5. Little Snitch — см. раздел ниже (нужен root, делает человек). Ставить после шага 4:
-   если приложение уже работает через прокси, kill-switch ничего не сломает.
-6. Ещё раз `./verify.sh` и Network Monitor в Little Snitch.
+| `verify.sh [claude] [chatgpt]` | Проверки; вызывается из `setup.sh verify` |
+| `tests/smoke.sh` | Прогон `setup.sh` в песочнице с заглушками, настоящие правила не трогает |
 
 ## Little Snitch
 
-Little Snitch 6 не импортирует локальный `.lsrules` (только подписка по https), а CLI
-`littlesnitch` требует root и разрешения в **Settings → Security → доступ из командной строки**.
-`restore-model` **заменяет всю модель целиком**, поэтому сначала обязательно бэкап.
+`./setup.sh little-snitch` делает всё сам: выгружает модель, вливает правила выбранных приложений,
+показывает их, спрашивает подтверждение, применяет и печатает команду отката. Выгрузки лежат в
+`~/Library/Application Support/proxied_ai_agents`.
 
-```bash
-sudo "/Applications/Little Snitch.app/Contents/Components/littlesnitch" export-model > ~/Desktop/ls-backup.json
-```
-```bash
-./littlesnitch/merge-rules.py ~/Desktop/ls-backup.json littlesnitch/claude-killswitch.lsrules littlesnitch/chatgpt-killswitch.lsrules ~/Desktop/ls-merged.json
-```
-```bash
-sudo "/Applications/Little Snitch.app/Contents/Components/littlesnitch" restore-model ~/Desktop/ls-merged.json
-```
-Откат:
-```bash
-sudo "/Applications/Little Snitch.app/Contents/Components/littlesnitch" restore-model ~/Desktop/ls-backup.json
-```
-После этого выключить доступ из командной строки в настройках Little Snitch.
-`merge-rules.py` удаляет прежние правила каждого набора по метке в `notes` (метка — поле `name`
-набора), так что его можно гонять повторно и передавать только нужные наборы.
+Что нужно знать:
+- Little Snitch 6 не импортирует локальный `.lsrules` (только подписка по https), поэтому используется
+  CLI `littlesnitch`. Ему нужен root и **Settings → Security → доступ из командной строки**.
+  После установки этот доступ лучше выключить.
+- `restore-model` **заменяет всю модель целиком**. `merge-rules.py` меняет в ней только правила
+  с меткой набора в `notes` (метка — поле `name` набора), остальное переносит как есть.
+- Правила ставьте, когда приложение запущено через лаунчер или закрыто: запущенное без прокси
+  приложение потеряет сеть.
 
 ### Правила Claude
 
@@ -130,7 +157,7 @@ sudo "/Applications/Little Snitch.app/Contents/Components/littlesnitch" restore-
 - Для **неподписанных** дочерних процессов (например, Python из pyenv) правило по via не
   применяется, Little Snitch показывает алерт. Это свои тестовые процессы — Deny/Allow по ситуации.
 - Тестировать «проходит ли прямое соединение» запуском `curl` из Claude бессмысленно: это
-  «claude via curl». Плюс TUN-режим Happ (маршрут по умолчанию через `utun`) сам рвёт соединения
+  «claude via curl». Плюс TUN-режим VPN-клиента (маршрут по умолчанию через `utun`) сам рвёт соединения
   на тестовые адреса. Надёжная проверка — Network Monitor.
 
 ## Обновления через прокси
@@ -178,7 +205,7 @@ nopx ssh user@host
 
 ## Диагностика
 
-- `./verify.sh` — флаги и env главного процесса, прямые сокеты, LaunchAgent, версии.
+- `./setup.sh verify` — флаги и env главного процесса, прямые сокеты, LaunchAgent, версии.
 - `~/Library/Logs/Claude/main.log` — `[updater]`, `stealth-relaunch`, `Resolved system proxy`.
 - `~/Library/Logs/com.openai.codex/<дата>/` — логи ChatGPT, `[sparkle]`.
 - `~/Library/Logs/<app>-proxy-update.log` — обновлятор.

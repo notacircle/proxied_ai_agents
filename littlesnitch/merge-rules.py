@@ -9,6 +9,7 @@ Little Snitch 6 не умеет импортировать локальный .l
 Метка набора — его поле name («Claude kill-switch», «ChatGPT kill-switch»), она
 же должна быть в notes каждого правила. Старые правила набора (по метке в notes)
 удаляются, поэтому скрипт можно запускать повторно. Остальная модель не меняется.
+С флагом --remove правила наборов только удаляются.
 """
 import datetime
 import json
@@ -16,9 +17,13 @@ import os
 import sys
 
 def main():
-    if len(sys.argv) < 4:
-        sys.exit("usage: merge-rules.py <export.json> <rules.lsrules>... <out.json>")
-    src, rule_files, dst = sys.argv[1], sys.argv[2:-1], sys.argv[-1]
+    args = sys.argv[1:]
+    remove_only = args[:1] == ["--remove"]
+    if remove_only:
+        args = args[1:]
+    if len(args) < 3:
+        sys.exit("usage: merge-rules.py [--remove] <export.json> <rules.lsrules>... <out.json>")
+    src, rule_files, dst = args[0], args[1:-1], args[-1]
 
     model = json.load(open(src))
     if "rules" not in model:
@@ -28,7 +33,7 @@ def main():
     rules = model["rules"]
     for path in rule_files:
         ruleset = json.load(open(path))
-        marker, new_rules = ruleset["name"], ruleset["rules"]
+        marker, new_rules = ruleset["name"], [] if remove_only else ruleset["rules"]
         kept = [r for r in rules if marker not in r.get("notes", "")]
         removed = len(rules) - len(kept)
         for r in new_rules:

@@ -3,7 +3,7 @@
 --
 -- Приложение не наследует системный прокси, поэтому бинарник
 -- запускается напрямую с флагом --proxy-server и env-переменными.
--- install.sh собирает из этого файла «Claude (proxied)» и «ChatGPT (proxied)»,
+-- setup.sh собирает из этого файла «Claude (proxied)» и «ChatGPT (proxied)»,
 -- подставляя appName и updaterName.
 --
 -- Как пользоваться:
