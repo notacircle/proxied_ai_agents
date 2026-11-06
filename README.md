@@ -210,3 +210,7 @@ nopx ssh user@host
 - `~/Library/Logs/com.openai.codex/<дата>/` — логи ChatGPT, `[sparkle]`.
 - `~/Library/Logs/<app>-proxy-update.log` — обновлятор.
 - `claude-proxy-update status`, `chatgpt-proxy-update status` — установлена / отложена / актуальная.
+
+## Лицензия
+
+MIT, см. [LICENSE](LICENSE).
